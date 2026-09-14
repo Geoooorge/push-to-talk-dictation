@@ -1,0 +1,10 @@
+# The API key and logs live in ~/.config/dictate/, deliberately outside this
+# repo. These patterns are a safety net in case a copy ever lands here.
+env
+*.env
+dictate.log
+
+.DS_Store
+*.orig
+*.bak
+*.backup
