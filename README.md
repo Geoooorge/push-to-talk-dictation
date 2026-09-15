@@ -36,15 +36,24 @@ for a fraction of a cent, which is why the Intel CPU never becomes the problem.
 Assumes Homebrew is already installed. Check with `which brew` — on an Intel
 Mac it should print `/usr/local/bin/brew`. If not, see brew.sh.
 
-### 1. Install the two dependencies
+### 1. Install the dependencies
 
 ```bash
 brew install sox
 brew install --cask hammerspoon
+brew install curl          # recommended, see below
 ```
 
 `sox` is the command-line recorder. Hammerspoon is the hotkey layer — note the
 `--cask`, it's a GUI app rather than a command-line formula.
+
+`curl` is already on macOS, so the third line looks redundant. It is not.
+Apple's build links LibreSSL 3.3.6, which intermittently aborts a large upload
+and loses that dictation; the Homebrew build links OpenSSL and does not. On the
+same 544 KB clip with retries disabled, Apple's failed about 1 upload in 6 and
+the Homebrew build failed 0 in 12. Homebrew's curl is keg-only, so it never
+joins your `PATH` and changes nothing else on the system — `dictate.sh` looks
+for it directly. Skip it if you like; uploads retry either way.
 
 ### 2. Put the script in place
 
@@ -115,7 +124,18 @@ System Settings → Privacy & Security:
 
 Toggling Accessibility off and back on fixes most "nothing appears" problems.
 
-### 8. Use it
+### 8. Launch Hammerspoon at login
+
+Click the Hammerspoon menu bar icon → **Preferences** → tick **Launch
+Hammerspoon at login**.
+
+Do not skip this. Hammerspoon *is* the hotkey — if it is not running after a
+restart, the key does nothing at all: no alert, no error, and nothing written
+to the log, because the script is never invoked. It reads as the tool having
+broken. Setting it inside Hammerspoon rather than in System Settings means it
+survives app updates.
+
+### 9. Use it
 
 Hold the **right option** key, speak, release. Text appears where your cursor
 is.
@@ -130,6 +150,17 @@ to conflict with — this is what `HOTKEY_MODE = "modifier"` at the top of
 `init.lua` selects, and `MODIFIER_MASK` picks which modifier (the table above
 it lists the codes). Set `HOTKEY_MODE = "chord"` if you would rather use a
 classic combo such as cmd+alt+D.
+
+## Commands
+
+Hammerspoon calls the first two for you; `retry` is the only one you are likely
+to type.
+
+| Command | What it does |
+|---|---|
+| `dictate.sh start` | Begin recording. Returns once the mic is genuinely capturing, not when the recorder launches. |
+| `dictate.sh stop` | Stop, transcribe, print the text to stdout. |
+| `dictate.sh retry [file]` | Re-send a clip whose upload failed. Newest unsent clip if no file is named. |
 
 ## Config options
 
@@ -238,6 +269,50 @@ WHISPER_THREADS="4"
 Time a 20-second clip. If `base.en` is tolerable, try `small.en` for better
 accuracy. If neither is fast enough, that answers the local-on-Intel question
 for good and you go back to the API.
+
+## Keeping it up to date
+
+The files in this repository are sources. They are not what runs — `~/bin/` and
+`~/.hammerspoon/` are. After pulling changes, copy them across again:
+
+```bash
+git pull
+cp dictate.sh ~/bin/dictate.sh && chmod +x ~/bin/dictate.sh
+cp hammerspoon-init.lua ~/.hammerspoon/init.lua
+```
+
+`dictate.sh` is re-read on every keypress, so it needs nothing further. The
+Hammerspoon config is only read at load, so reload it from the menu bar icon —
+or, since the config loads `hs.ipc`, from a shell:
+
+```bash
+hs -c 'hs.reload()'
+```
+
+Your settings live in `~/.config/dictate/env` and in the tunables at the top of
+`init.lua`. Pulling will overwrite `init.lua` edits, so note any you have made.
+
+## Developing
+
+```bash
+bash -n dictate.sh          # shell syntax
+luac -p hammerspoon-init.lua   # lua syntax (brew install lua)
+lua test/init_spec.lua      # 20 assertions, no microphone needed
+```
+
+`test/init_spec.lua` stubs the Hammerspoon API and loads the real `init.lua`
+headless, so it can drive the things that are impractical to reproduce by hand:
+a key release the event tap never delivers, a tap disabled by the system, a
+modifier API that never reports the key held. If you change the recording state
+machine, add a case — a syntax check will not catch a logic error in a callback
+that only fires on failure.
+
+To force the upload-failure path without touching your config, name a model
+that does not exist:
+
+```bash
+DICTATE_GROQ_MODEL=does-not-exist ~/bin/dictate.sh stop
+```
 
 ## Cost
 
@@ -432,10 +507,18 @@ cannot hang the hotkey; if it expires you get a line in the log saying so.
 
 ## Notes
 
-- Audio is recorded to `/tmp/dictate.wav` and deleted as soon as
-  transcription finishes, whether it succeeded or failed. Nothing is stored
-  server-side by this script; retention is whatever your API provider's
-  policy says.
+- Audio is recorded to `/tmp/dictate.wav` and deleted as soon as the
+  transcript comes back. The one exception is an upload that fails: that clip
+  is moved to `~/.config/dictate/unsent/` so it can be re-sent, and deleted
+  once it transcribes. If you abandon one, delete the file — it is a recording
+  of you sitting on disk. Nothing is stored server-side by this script;
+  retention is whatever your API provider's policy says.
+- The microphone is open for as long as you hold the key, so anything audible
+  in the room is transcribed along with you — a video playing nearby will have
+  its dialogue land in your text. That is the transcription working correctly,
+  not a fault. True silence is different: on an empty clip Whisper tends to
+  emit a stock phrase such as "Thank you.", which is why very short clips are
+  discarded via `DICTATE_MIN_SECONDS`.
 - `INSERT_METHOD` controls how text lands. `"paste"` (the default) puts the
   whole dictation in at once via the clipboard, then restores what you had
   about half a second later — this is what makes it appear in one go rather
