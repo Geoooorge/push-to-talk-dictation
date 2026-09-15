@@ -282,11 +282,14 @@ cp hammerspoon-init.lua ~/.hammerspoon/init.lua
 ```
 
 `dictate.sh` is re-read on every keypress, so it needs nothing further. The
-Hammerspoon config is only read at load, so reload it from the menu bar icon —
-or, since the config loads `hs.ipc`, from a shell:
+Hammerspoon config is only read at load, so reload it from the menu bar icon.
+
+Because the config loads `hs.ipc` you can also reload from a shell, but give it
+a timeout — `hs -c` waits indefinitely for a reply and occasionally never gets
+one, leaving a shell hanging around until you notice and kill it:
 
 ```bash
-hs -c 'hs.reload()'
+timeout 5 hs -c 'hs.reload()'
 ```
 
 Your settings live in `~/.config/dictate/env` and in the tunables at the top of

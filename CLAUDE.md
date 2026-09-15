@@ -57,14 +57,27 @@ tail -f ~/.config/dictate/dictate.log
 ### Driving Hammerspoon from the shell
 
 `init.lua` loads `hs.ipc`, so the `hs` CLI can reload the config and inspect the
-live runtime. Prefer this over asking the user to click Reload Config:
+live runtime. Prefer this over asking the user to click Reload Config.
+
+**Always put a timeout on `hs -c`.** It talks to Hammerspoon over a Mach port
+and waits forever for a reply that may never arrive — observed hanging both on
+`hs.reload()` (the Lua state is torn down mid-call) and on an ordinary query
+issued soon after a reload. It is a race, not a deterministic failure, so it
+will work repeatedly and then park a shell: one sat for 21 hours in this
+project before anyone noticed. A fresh `hs -c` still answers normally while an
+earlier one hangs, so a working call is no evidence the last one returned.
 
 ```bash
-hs -c 'hs.reload()'
-hs -c 'return tostring(hs.accessibilityState())'
+timeout 5 hs -c 'hs.reload()'                       # coreutils, if installed
+perl -e 'alarm shift; exec @ARGV' 5 hs -c '...'     # always available on macOS
+
+timeout 5 hs -c 'return tostring(hs.accessibilityState())'
 # console output, including [dictate] watchdog lines
-hs -c 'local c=hs.console.getConsole(); if type(c)=="userdata" and c.getString then c=c:getString() end; return tostring(c):sub(-600)'
+timeout 5 hs -c 'local c=hs.console.getConsole(); if type(c)=="userdata" and c.getString then c=c:getString() end; return tostring(c):sub(-600)'
 ```
+
+If a shell is reported still running at the end of a session, this is the first
+thing to check: `pgrep -fl "hs -c"`.
 
 Console history survives reloads, so check timestamps before treating a warning
 as current.
