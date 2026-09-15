@@ -29,6 +29,11 @@ RECORDER="${DICTATE_RECORDER:-auto}"
 # this machine takes about 0.4s.
 WARMUP_MAX="${DICTATE_WARMUP_MAX:-2.0}"
 
+# A recording whose upload failed is moved here instead of being deleted, so
+# "dictate.sh retry" can send it again. Losing the audio would mean losing the
+# words, which is the one thing this script is not allowed to do.
+UNSENT="${DICTATE_UNSENT:-${HOME}/.config/dictate/unsent}"
+
 # Which microphone ffmpeg records from. ":default" follows the system input
 # device. Use an explicit index (":1") to pin one; list them with:
 #   ffmpeg -f avfoundation -list_devices true -i ""
@@ -270,7 +275,10 @@ clip_seconds() {
 
 transcribe_groq() {
   [ -n "${GROQ_API_KEY:-}" ] || die "GROQ_API_KEY not set in $CONFIG"
-  curl -sS --fail --max-time 60 \
+  # Apple's curl links LibreSSL, which intermittently aborts a large multipart
+  # upload with "sslv3 alert bad record mac". Measured here at roughly 1 in 6
+  # on a 17-second clip; a plain retry clears it, 0 failures in 8 with this on.
+  curl -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
     https://api.groq.com/openai/v1/audio/transcriptions \
     -H "Authorization: Bearer ${GROQ_API_KEY}" \
     -F "file=@${AUDIO}" \
@@ -283,7 +291,7 @@ transcribe_groq() {
 
 transcribe_openai() {
   [ -n "${OPENAI_API_KEY:-}" ] || die "OPENAI_API_KEY not set in $CONFIG"
-  curl -sS --fail --max-time 60 \
+  curl -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
     https://api.openai.com/v1/audio/transcriptions \
     -H "Authorization: Bearer ${OPENAI_API_KEY}" \
     -F "file=@${AUDIO}" \
@@ -338,7 +346,7 @@ print(json.dumps({
   ],
 }))' 2>>"$LOG")
 
-  out=$(curl -sS --fail --max-time 20 \
+  out=$(curl -sS --fail --max-time 20 --retry 2 --retry-delay 1 --retry-all-errors \
           https://api.groq.com/openai/v1/chat/completions \
           -H "Authorization: Bearer ${GROQ_API_KEY}" \
           -H "Content-Type: application/json" \
@@ -392,6 +400,36 @@ print(txt.strip())' 2>>"$LOG")
   printf '%s' "$out"
 }
 
+# Keep a recording the network could not deliver. Called before die(), whose
+# EXIT trap clears /tmp, so the copy has to happen first.
+preserve_audio() {
+  [ -s "$AUDIO" ] || return 0
+  mkdir -p "$UNSENT" 2>/dev/null || return 0
+  local dest="${UNSENT}/$(date '+%Y%m%d-%H%M%S').wav"
+  if cp "$AUDIO" "$dest" 2>/dev/null; then
+    log "audio kept at $dest — resend it with: $(basename "$0") retry"
+  fi
+}
+
+# Re-send the most recent recording that failed to upload (or a named file).
+cmd_retry() {
+  local file="${1:-}"
+  if [ -z "$file" ]; then
+    file=$(ls -t "${UNSENT}"/*.wav 2>/dev/null | head -1)
+  fi
+  [ -n "$file" ] && [ -f "$file" ] || die "no unsent recording in $UNSENT"
+
+  AUDIO="$file"          # the transcribe_* backends all read $AUDIO
+  local text
+  text=$(transcribe) || die "retry failed (backend: $BACKEND) — $file kept"
+  text=$(printf '%s' "$text" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+  [ -n "$text" ] && text=$(polish "$text")
+
+  log "resent $file -> $(printf '%s' "$text" | wc -c | tr -d ' ') bytes"
+  printf '%s' "$text"
+  rm -f "$file"
+}
+
 cmd_stop() {
   # Never leave audio on disk, whatever happens below.
   trap 'rm -f "$AUDIO" "$RAW"' EXIT
@@ -422,7 +460,10 @@ cmd_stop() {
   fi
 
   local text
-  text=$(transcribe) || die "transcription failed (backend: $BACKEND)"
+  text=$(transcribe) || {
+    preserve_audio
+    die "transcription failed (backend: $BACKEND)"
+  }
   text=$(printf '%s' "$text" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
   [ -n "$text" ] && text=$(polish "$text")
@@ -436,5 +477,6 @@ cmd_stop() {
 case "${1:-}" in
   start) cmd_start ;;
   stop)  cmd_stop  ;;
-  *)     echo "usage: $(basename "$0") {start|stop}" >&2; exit 2 ;;
+  retry) shift; cmd_retry "${1:-}" ;;
+  *)     echo "usage: $(basename "$0") {start|stop|retry [file]}" >&2; exit 2 ;;
 esac

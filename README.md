@@ -146,6 +146,7 @@ Everything goes in `~/.config/dictate/env`.
 | `DICTATE_GROQ_MODEL` | `whisper-large-v3-turbo` | |
 | `DICTATE_CLEANUP_MODEL` | `qwen/qwen3.8-27b` | Only used if cleanup is on |
 | `DICTATE_RECORDER` | `auto` | `sox`, `micrec`, or `ffmpeg`; `auto` prefers sox |
+| `DICTATE_UNSENT` | `~/.config/dictate/unsent` | Where a recording is kept if its upload fails |
 
 ### Changing the API key
 
@@ -258,6 +259,28 @@ and on in System Settings → Privacy & Security → Accessibility.
 
 **"sox not found".** On Intel Macs Homebrew installs to `/usr/local/bin`; the
 script already checks there, but confirm with `which rec`.
+
+**"transcription failed" and nothing pasted.** The recording is not lost. A
+clip whose upload fails is kept in `~/.config/dictate/unsent/`, and the log
+line names the file. Send it again with:
+
+```bash
+~/bin/dictate.sh retry          # newest unsent clip, prints the transcript
+~/bin/dictate.sh retry FILE     # or a specific one
+```
+
+The file is deleted once it transcribes successfully. Since `retry` prints to
+stdout rather than typing at your cursor, pipe it to `pbcopy` if you want it on
+the clipboard.
+
+**`sslv3 alert bad record mac` in the log.** A TLS failure inside Apple's
+bundled curl, which links LibreSSL 3.3.6. It hits large uploads specifically —
+measured here at roughly 1 upload in 6 for a 17-second clip, while 12
+consecutive small requests never failed. Nothing is wrong with your key or
+network. Uploads now retry up to three times, which cleared it completely (0
+failures in 8 where 1 or 2 were expected). If you see it often enough to
+notice, `brew install curl` provides an OpenSSL build that does not have this
+fault, though the retry alone should hide it.
 
 **Empty output.** Check `~/.config/dictate/dictate.log`. Usually a bad API key
 or a clip under the minimum length. A `404` there means the model named in your

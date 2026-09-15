@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Push-to-talk dictation for macOS (built and tuned on an Intel MacBook Pro): hold
 the right option key, speak, release, and the transcript is inserted at the
-cursor. Two source files, no build system, no package manager, not a git
-repository. `README.md` is the user-facing install and troubleshooting guide and
-is kept current — read it before changing behaviour it documents.
+cursor. Two source files, no build system and no package manager; published at
+https://github.com/Geoooorge/push-to-talk-dictation. `README.md` is the
+user-facing install and troubleshooting guide and is kept current — read it
+before changing behaviour it documents.
 
 ## The repo is not what runs
 
@@ -42,6 +43,12 @@ lua test/init_spec.lua
 
 # Exercise the shell side end to end (records real audio, hits the API)
 ~/bin/dictate.sh start && sleep 2 && ~/bin/dictate.sh stop
+
+# Resend a clip whose upload failed (kept in ~/.config/dictate/unsent/)
+~/bin/dictate.sh retry
+
+# Force the failure path without breaking the config: an unknown model 404s
+DICTATE_GROQ_MODEL=does-not-exist ~/bin/dictate.sh stop
 
 # Watch what actually happened
 tail -f ~/.config/dictate/dictate.log
@@ -92,7 +99,9 @@ check (~13-28ms each), which overshot badly.
 
 Every stage falls back rather than erroring out, and logs why:
 
-- Transcription fails → `die`, nothing pasted.
+- Transcription fails → the clip is moved to `$UNSENT`
+  (`~/.config/dictate/unsent/`) and `dictate.sh retry` resends it. The paste is
+  lost; the audio is not.
 - Cleanup fails, times out, or returns implausible output → raw transcript.
 - Recorder never produces samples → returns anyway after `DICTATE_WARMUP_MAX`.
 - Key release never delivered → watchdog completes the dictation.
@@ -150,6 +159,11 @@ Re-deriving them costs an hour and a broken microphone.
   always fails. Left/right information exists only on the event. The watchdog
   therefore asks only whether the modifier is down at all, and must observe it
   held once per recording before it may conclude anything was released.
+- **Apple's curl links LibreSSL 3.3.6 and intermittently fails large multipart
+  uploads** with `sslv3 alert bad record mac` — measured at ~1 in 6 for a 544KB
+  clip, while small requests never failed. All upload calls carry
+  `--retry 3 --retry-all-errors`; do not remove it. Diagnose an upload
+  complaint by reproducing at realistic payload size, not with a small GET.
 - **Cleanup models get retired.** A `404` in the log means the model in
   `DICTATE_CLEANUP_MODEL` no longer exists; check the provider's model list
   rather than assuming the key broke. Verify a replacement against the provider
