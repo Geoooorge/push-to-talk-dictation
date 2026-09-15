@@ -147,6 +147,7 @@ Everything goes in `~/.config/dictate/env`.
 | `DICTATE_CLEANUP_MODEL` | `qwen/qwen3.8-27b` | Only used if cleanup is on |
 | `DICTATE_RECORDER` | `auto` | `sox`, `micrec`, or `ffmpeg`; `auto` prefers sox |
 | `DICTATE_UNSENT` | `~/.config/dictate/unsent` | Where a recording is kept if its upload fails |
+| `DICTATE_CURL` | auto | Path to curl; a Homebrew one is preferred automatically |
 
 ### Changing the API key
 
@@ -275,12 +276,21 @@ the clipboard.
 
 **`sslv3 alert bad record mac` in the log.** A TLS failure inside Apple's
 bundled curl, which links LibreSSL 3.3.6. It hits large uploads specifically —
-measured here at roughly 1 upload in 6 for a 17-second clip, while 12
-consecutive small requests never failed. Nothing is wrong with your key or
-network. Uploads now retry up to three times, which cleared it completely (0
-failures in 8 where 1 or 2 were expected). If you see it often enough to
-notice, `brew install curl` provides an OpenSSL build that does not have this
-fault, though the retry alone should hide it.
+measured at roughly 1 upload in 6 for a 17-second clip, while 12 consecutive
+small requests never failed. Nothing is wrong with your key or network.
+
+Two things guard against it. Uploads retry up to three times, which alone took
+8 uploads to zero failures. And if a Homebrew curl is installed it is used in
+preference to Apple's, since it links OpenSSL instead:
+
+```bash
+brew install curl        # keg-only; dictate.sh finds it without touching PATH
+```
+
+Same 544KB clip, no retries, Apple's curl failed about 1 in 6 while the
+Homebrew build failed 0 in 12. The transcription-failure message names which
+curl was used, so the log tells you which one was in play. `DICTATE_CURL`
+overrides the choice.
 
 **Empty output.** Check `~/.config/dictate/dictate.log`. Usually a bad API key
 or a clip under the minimum length. A `404` there means the model named in your

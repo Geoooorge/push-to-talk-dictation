@@ -161,9 +161,12 @@ Re-deriving them costs an hour and a broken microphone.
   held once per recording before it may conclude anything was released.
 - **Apple's curl links LibreSSL 3.3.6 and intermittently fails large multipart
   uploads** with `sslv3 alert bad record mac` — measured at ~1 in 6 for a 544KB
-  clip, while small requests never failed. All upload calls carry
-  `--retry 3 --retry-all-errors`; do not remove it. Diagnose an upload
-  complaint by reproducing at realistic payload size, not with a small GET.
+  clip, while small requests never failed. Two guards, keep both: every call
+  goes through `$CURL`, which prefers a keg-only Homebrew curl (OpenSSL, 0
+  failures in 12 on the same clip) over Apple's, and all upload calls carry
+  `--retry 3 --retry-all-errors`, which also covers 429 and 5xx. Diagnose an
+  upload complaint by reproducing at realistic payload size, not with a small
+  GET — 12 small requests failed 0 times while the fault was live.
 - **Cleanup models get retired.** A `404` in the log means the model in
   `DICTATE_CLEANUP_MODEL` no longer exists; check the provider's model list
   rather than assuming the key broke. Verify a replacement against the provider

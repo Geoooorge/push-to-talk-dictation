@@ -34,6 +34,19 @@ WARMUP_MAX="${DICTATE_WARMUP_MAX:-2.0}"
 # words, which is the one thing this script is not allowed to do.
 UNSENT="${DICTATE_UNSENT:-${HOME}/.config/dictate/unsent}"
 
+# Which curl to upload with. Apple's links LibreSSL 3.3.6 and intermittently
+# aborts a large multipart upload with "sslv3 alert bad record mac" — measured
+# at roughly 1 in 6 on a 544KB clip. A Homebrew curl links OpenSSL and did not
+# fail once in 12 uploads of the same clip, but it is keg-only, so it never
+# appears on PATH and has to be named explicitly.
+CURL="${DICTATE_CURL:-}"
+if [ -z "$CURL" ]; then
+  for c in /usr/local/opt/curl/bin/curl /opt/homebrew/opt/curl/bin/curl; do
+    if [ -x "$c" ]; then CURL="$c"; break; fi
+  done
+fi
+CURL="${CURL:-curl}"
+
 # Which microphone ffmpeg records from. ":default" follows the system input
 # device. Use an explicit index (":1") to pin one; list them with:
 #   ffmpeg -f avfoundation -list_devices true -i ""
@@ -275,10 +288,8 @@ clip_seconds() {
 
 transcribe_groq() {
   [ -n "${GROQ_API_KEY:-}" ] || die "GROQ_API_KEY not set in $CONFIG"
-  # Apple's curl links LibreSSL, which intermittently aborts a large multipart
-  # upload with "sslv3 alert bad record mac". Measured here at roughly 1 in 6
-  # on a 17-second clip; a plain retry clears it, 0 failures in 8 with this on.
-  curl -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
+  # Retries stay even on an OpenSSL curl: they also cover 429 and 5xx.
+  "$CURL" -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
     https://api.groq.com/openai/v1/audio/transcriptions \
     -H "Authorization: Bearer ${GROQ_API_KEY}" \
     -F "file=@${AUDIO}" \
@@ -291,7 +302,7 @@ transcribe_groq() {
 
 transcribe_openai() {
   [ -n "${OPENAI_API_KEY:-}" ] || die "OPENAI_API_KEY not set in $CONFIG"
-  curl -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
+  "$CURL" -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
     https://api.openai.com/v1/audio/transcriptions \
     -H "Authorization: Bearer ${OPENAI_API_KEY}" \
     -F "file=@${AUDIO}" \
@@ -346,7 +357,7 @@ print(json.dumps({
   ],
 }))' 2>>"$LOG")
 
-  out=$(curl -sS --fail --max-time 20 --retry 2 --retry-delay 1 --retry-all-errors \
+  out=$("$CURL" -sS --fail --max-time 20 --retry 2 --retry-delay 1 --retry-all-errors \
           https://api.groq.com/openai/v1/chat/completions \
           -H "Authorization: Bearer ${GROQ_API_KEY}" \
           -H "Content-Type: application/json" \
@@ -462,7 +473,7 @@ cmd_stop() {
   local text
   text=$(transcribe) || {
     preserve_audio
-    die "transcription failed (backend: $BACKEND)"
+    die "transcription failed (backend: $BACKEND, curl: $CURL)"
   }
   text=$(printf '%s' "$text" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 
