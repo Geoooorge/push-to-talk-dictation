@@ -289,7 +289,7 @@ clip_seconds() {
 transcribe_groq() {
   [ -n "${GROQ_API_KEY:-}" ] || die "GROQ_API_KEY not set in $CONFIG"
   # Retries stay even on an OpenSSL curl: they also cover 429 and 5xx.
-  "$CURL" -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
+  "$CURL" -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-max-time 60 --retry-all-errors \
     https://api.groq.com/openai/v1/audio/transcriptions \
     -H "Authorization: Bearer ${GROQ_API_KEY}" \
     -F "file=@${AUDIO}" \
@@ -302,7 +302,7 @@ transcribe_groq() {
 
 transcribe_openai() {
   [ -n "${OPENAI_API_KEY:-}" ] || die "OPENAI_API_KEY not set in $CONFIG"
-  "$CURL" -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-all-errors \
+  "$CURL" -sS --fail --max-time 60 --retry 3 --retry-delay 1 --retry-max-time 60 --retry-all-errors \
     https://api.openai.com/v1/audio/transcriptions \
     -H "Authorization: Bearer ${OPENAI_API_KEY}" \
     -F "file=@${AUDIO}" \
@@ -357,7 +357,7 @@ print(json.dumps({
   ],
 }))' 2>>"$LOG")
 
-  out=$("$CURL" -sS --fail --max-time 20 --retry 2 --retry-delay 1 --retry-all-errors \
+  out=$("$CURL" -sS --fail --max-time 20 --retry 2 --retry-delay 1 --retry-max-time 25 --retry-all-errors \
           https://api.groq.com/openai/v1/chat/completions \
           -H "Authorization: Bearer ${GROQ_API_KEY}" \
           -H "Content-Type: application/json" \

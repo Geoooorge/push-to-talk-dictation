@@ -398,6 +398,45 @@ milliseconds of CPU per day. The only real expense is waking a timer. Set
 keep the release watchdog, and a tap disabled by the system stays dead until
 you reload Hammerspoon, which is the behaviour this guard exists to prevent.
 
+**The hotkey works for a while, then does nothing until you reload
+Hammerspoon.** Partly addressed, and not yet fully explained. An event tap can
+go *deaf*: it still reports itself enabled, so the `TAP_CHECK_INTERVAL`
+supervisor sees nothing wrong and never restarts it, but no key events are
+delivered again. Waking from sleep is one known trigger, and a laptop that
+sleeps on idle wakes dozens of times a day.
+
+`init.lua` therefore also registers an `hs.caffeinate.watcher` and rebuilds the
+tap on `systemDidWake`, `screensDidUnlock` and `sessionDidBecomeActive`. It
+stops and restarts the tap unconditionally rather than checking `isEnabled()`
+first, because that flag is exactly what is unreliable here. Each rebuild
+prints `[dictate] event tap restarted (system woke)` to the console.
+
+That does not cover every case — at least one observed dead-hotkey incident had
+no sleep before it. **Before reloading, run the checklist below**, because
+reloading destroys the evidence.
+
+1. Is the `...` indicator on screen? If so a transcription is stuck, not the
+   tap: check with `pgrep -fl dictate.sh`.
+2. Otherwise:
+
+   ```bash
+   timeout 5 hs -c 'return dictateStatus()'
+   # recording=false stopPending=false tapEnabled=true tapRestarts=3 lastTapEvent=1.1s ago
+   ```
+
+   Press and release the right option key, then run it again.
+   - `lastTapEvent` does **not** move → the tap is deaf. Also check whether
+     something has grabbed Secure Keyboard Entry, which silences taps with no
+     sleep involved: `ioreg -l -w 0 | grep -i kCGSSessionSecureInputPID`.
+     Terminal has a "Secure Keyboard Entry" menu item; password fields and
+     1Password take it too.
+   - `lastTapEvent` moves but nothing records → a stuck state, and the
+     `recording` and `stopPending` fields say which.
+3. Check the Hammerspoon console for any `[dictate]` line since the last
+   reload.
+
+`tapRestarts` shows whether the recovery paths are firing at all.
+
 The polling guard earns the right to act rather than assuming it. macOS reports
 modifier state to a background query in *device-independent* form, which cannot
 distinguish left option from right, and an attempt to match it against the

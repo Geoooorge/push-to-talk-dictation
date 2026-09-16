@@ -3,6 +3,7 @@ package.preload["hs.ipc"] = function() return {} end
 
 local clock, timers, alerts, nextAlert = 0, {}, {}, 0
 local tapEnabled, rawFlags = true, 0
+local tapGeneration = 0
 local tasks = {}
 local pasted = nil
 
@@ -37,7 +38,7 @@ hs.eventtap = {
   new = function(types, fn)
     local t = { fn = fn }
     TAP = t
-    t.start = function(self) tapEnabled = true end
+    t.start = function(self) tapEnabled = true; tapGeneration = tapGeneration + 1 end
     t.stop  = function(self) tapEnabled = false end
     t.isEnabled = function(self) return tapEnabled end
     return t
@@ -58,6 +59,20 @@ hs.task = {
   end,
 }
 hs.hotkey = { bind = function() end }
+-- The tap that comes back deaf after sleep: start/stop still work and
+-- isEnabled() still reports true, so only a wake event can rescue it.
+local wakeFn = nil
+hs.caffeinate = {
+  watcher = {
+    systemDidWake = "systemDidWake",
+    screensDidUnlock = "screensDidUnlock",
+    sessionDidBecomeActive = "sessionDidBecomeActive",
+    new = function(fn)
+      wakeFn = fn
+      return { start = function() end, stop = function() end }
+    end,
+  },
+}
 
 -- helpers the test drives
 TEST = {
@@ -85,6 +100,8 @@ TEST = {
     table.sort(out); return table.concat(out, ",")
   end,
   setTapEnabled = function(v) tapEnabled = v end,
+  wake = function() if wakeFn then wakeFn("systemDidWake") end end,
+  tapGeneration = function() return tapGeneration end,
   tapEnabled = function() return tapEnabled end,
   setRaw = function(v) rawFlags = v end,
   clearAlerts = function() for k in pairs(alerts) do alerts[k] = nil end end,

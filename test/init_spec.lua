@@ -69,5 +69,29 @@ TEST.tick(6)
 check("no stale trust from run 7", TEST.alertsShown(), "Listening")
 TEST.release(TAP); TEST.finishTask()
 
+print("9. tap comes back deaf after sleep -> wake rebuilds it")
+-- The regression that made the hotkey need a manual reload: the tap still
+-- reports enabled, so the supervisor never acts on it.
+TEST.clearAlerts()
+check("tap still claims enabled", TEST.tapEnabled(), true)
+local before = TEST.tapGeneration()
+TEST.tick(1)
+check("supervisor does nothing, it looks fine", TEST.tapGeneration(), before)
+TEST.wake()
+check("wake rebuilt the tap", TEST.tapGeneration() > before, true)
+
+print("10. hotkey still records after a wake")
+TEST.press(TAP); check("re-arms after wake", TEST.alertsShown(), "Opening mic")
+TEST.finishTask(); TEST.release(TAP); TEST.finishTask()
+check("clean", TEST.alertsShown(), "")
+
+print("11. press while the previous clip is still transcribing")
+TEST.press(TAP); TEST.finishTask(); TEST.release(TAP)   -- stop pending, not finished
+check("transcribing", TEST.alertsShown(), "...")
+TEST.press(TAP)
+check("says why instead of dying silently",
+      TEST.alertsShown(), "...,Still transcribing…")
+TEST.finishTask()
+
 print(("\n%d passed, %d failed"):format(pass, fail))
 os.exit(fail == 0 and 0 or 1)

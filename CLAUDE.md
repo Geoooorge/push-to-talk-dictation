@@ -167,6 +167,26 @@ Re-deriving them costs an hour and a broken microphone.
   30s or longer** — shorter runs produce false confidence.
 - **Do not build the `micrec` AVAudioEngine backend to reduce latency.** Measured
   665-695ms to first buffer versus sox's ~410ms. The ~410ms is a CoreAudio floor.
+- **`flagWatcher:isEnabled()` is not a liveness check** — treat this as a
+  working hypothesis, not a measured constraint. A tap can report itself
+  enabled while delivering no events, in which case the `TAP_CHECK_INTERVAL`
+  supervisor (which only acts on `not isEnabled()`) never fires and the hotkey
+  stays dead until a manual reload. An `hs.caffeinate.watcher` therefore
+  rebuilds the tap on wake unconditionally; do not "optimise" that into an
+  `isEnabled()` check first. Evidence as of 2026-09-16: one wake (13:15:20)
+  correlates with a reload (13:20:07), but a second reload (13:24:38) had no
+  sleep before it and followed a successful dictation, so **at least one other
+  mechanism exists and is not yet identified.** The deaf-tap behaviour is
+  reproduced in `test/init_spec.lua` case 9 by stubbing it; it has not been
+  observed directly on the machine. Candidates still open for the 13:24 case:
+  macOS Secure Keyboard Entry (Terminal's menu item, password fields,
+  1Password) silences taps with `isEnabled()` still true and no sleep
+  involved — check `ioreg -l -w 0 | grep -i kCGSSessionSecureInputPID`.
+  Diagnose the next incident before reloading, because a reload destroys the
+  evidence: `timeout 5 hs -c 'return dictateStatus()'`, press and release the
+  modifier, run it again. `lastTapEvent` not moving means the tap is deaf;
+  moving while nothing records means a state problem, and the `recording` and
+  `stopPending` fields say which.
 - **`hs.eventtap.checkKeyboardModifiers` cannot distinguish left from right.** It
   returns device-independent flags, so matching it against `MODIFIER_MASK`
   always fails. Left/right information exists only on the event. The watchdog

@@ -88,6 +88,9 @@ local workingAlert   = nil
 local flagWatcher    = nil   -- assigned at the bottom; the watchdog revives it
 local watchdog       = nil   -- runs only while recording
 local tapSupervisor  = nil   -- runs always
+local wakeWatcher    = nil   -- restarts the tap after the machine sleeps
+local tapRestarts    = 0     -- how many times the tap has been revived
+local lastTapEvent   = 0     -- when the tap last saw a flagsChanged event
 local recordingSince = 0
 local releasedPolls  = 0
 local pollTrusted    = false
@@ -211,7 +214,14 @@ end
 
 local function startRecording()
   if recording then return end
-  if stopTask then return end   -- still transcribing the previous one
+  -- Still transcribing the previous clip. AUDIO is a fixed path, so starting
+  -- now would overwrite a clip mid-upload. Say so instead of dying silently:
+  -- a key that does nothing and prints nothing is undiagnosable after the fact.
+  if stopTask then
+    print("[dictate] key pressed while the previous clip was still transcribing — ignored")
+    hs.alert.show("Still transcribing…")
+    return
+  end
   recording = true
 
   recordingSince = hs.timer.secondsSinceEpoch()
@@ -287,6 +297,7 @@ end
 if HOTKEY_MODE == "modifier" then
   flagWatcher = hs.eventtap.new({ hs.eventtap.event.types.flagsChanged },
     function(e)
+      lastTapEvent = hs.timer.secondsSinceEpoch()
       local raw = e:getRawEventData().CGEventData.flags
       local down = maskSet(raw, MODIFIER_MASK)
       if down and not recording then
@@ -304,13 +315,54 @@ end
 -- A tap disabled by macOS stays disabled, which is what made the hotkey go
 -- dead until a reload. Nothing else notices, so check it on a slow timer and
 -- start it again. Held at file scope so it is not garbage collected.
+--
+-- restart it unconditionally: isEnabled() is not a reliable liveness check.
+-- After the machine sleeps, the tap comes back reporting enabled while no
+-- longer receiving any events, so a supervisor that only acts on
+-- "not isEnabled()" never fires and the hotkey stays dead until a reload.
+-- Stopping first forces a genuinely new tap rather than a no-op start.
+local function reviveTap(why)
+  if not flagWatcher then return end
+  flagWatcher:stop()
+  flagWatcher:start()
+  tapRestarts = tapRestarts + 1
+  print("[dictate] event tap restarted (" .. why .. ")")
+end
+
 if flagWatcher and TAP_CHECK_INTERVAL > 0 then
   tapSupervisor = hs.timer.doEvery(TAP_CHECK_INTERVAL, function()
     if not flagWatcher:isEnabled() then
-      flagWatcher:start()
-      print("[dictate] event tap had been disabled by the system — restarted")
+      reviveTap("system had disabled it")
     end
   end)
+end
+
+-- This machine sleeps every few minutes on idle and wakes dozens of times a
+-- day; each wake is a chance for the tap to come back deaf. The supervisor
+-- above cannot see that state, so rebuild the tap on every wake and unlock.
+if flagWatcher then
+  wakeWatcher = hs.caffeinate.watcher.new(function(event)
+    local w = hs.caffeinate.watcher
+    if event == w.systemDidWake
+       or event == w.screensDidUnlock
+       or event == w.sessionDidBecomeActive then
+      reviveTap("system woke")
+    end
+  end)
+  wakeWatcher:start()
+end
+
+-- Queryable from the shell, which locals are not:
+--   timeout 5 hs -c 'return dictateStatus()'
+-- lastTapEvent going stale while the key is being pressed is the signature of
+-- a deaf tap; tapRestarts shows whether the recovery paths are firing at all.
+function dictateStatus()
+  local now = hs.timer.secondsSinceEpoch()
+  return string.format(
+    "recording=%s stopPending=%s tapEnabled=%s tapRestarts=%d lastTapEvent=%s",
+    tostring(recording), tostring(stopTask ~= nil),
+    tostring(flagWatcher and flagWatcher:isEnabled()), tapRestarts,
+    lastTapEvent == 0 and "never" or string.format("%.1fs ago", now - lastTapEvent))
 end
 
 hs.alert.show("Dictation loaded (" .. HOTKEY_MODE .. ", " .. INSERT_METHOD .. ")")
